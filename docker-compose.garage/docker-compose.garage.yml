@@ -69,7 +69,6 @@ services:
         condition: service_started
     networks:
       - notesnook
-    env_file: .env
     environment:
       - GARAGE_ACCESS_KEY_ID=${GARAGE_ACCESS_KEY_ID:-}
       - GARAGE_ACCESS_KEY_SECRET=${GARAGE_ACCESS_KEY_SECRET:-}

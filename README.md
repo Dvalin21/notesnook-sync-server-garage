@@ -61,8 +61,8 @@ above. The web client uses `MONOGRAPH_PUBLIC_URL`.
 | `auth.example.com` | `identity-server:8264` |
 | `sse.example.com` | `sse-server:7264` |
 | `notes.example.com` | `monograph-server:3000` |
-| `attach.example.com` | `garage:3900` (S3 API) |
-| `garage.example.com` | `garage:3900` (S3 console UI) |
+| `attach.keithtechco.com` | `garage:3900` (S3 API) |
+| `garage.keithtechco.com` | `garage:3900` (S3 console UI) |
 | `cors.example.com` | `cors-proxy:3000` |
 
 ---
@@ -218,20 +218,21 @@ Once all services show `(healthy)`, test each subdomain through Caddy on
 port 8080. Replace `example.com` with your real `SERVER_DOMAIN`.
 
 ```bash
-curl -fsS -H "Host: auth.example.com"   http://localhost:8080/.well-known/openid-configuration
-curl -fsS -H "Host: sync.example.com"   http://localhost:8080/health
-curl -fsS -H "Host: sse.example.com"    http://localhost:8080/health
-curl -fsS -H "Host: notes.example.com"  http://localhost:8080/
-curl -fsS -H "Host: attach.example.com" http://localhost:8080/
-curl -fsS -H "Host: garage.example.com" http://localhost:8080/
-curl -fsS -H "Host: cors.example.com"   http://localhost:8080/
+curl -fsS -H "Host: auth.keithtechco.com"   http://localhost:8080/.well-known/openid-configuration
+curl -fsS -H "Host: sync.keithtechco.com"   http://localhost:8080/health
+curl -fsS -H "Host: sse.keithtechco.com"    http://localhost:8080/health
+curl -fsS -H "Host: notes.keithtechco.com"  http://localhost:8080/
+curl -fsS -H "Host: attach.keithtechco.com" http://localhost:8080/
+curl -fsS -H "Host: garage.keithtechco.com" http://localhost:8080/
+curl -fsS -H "Host: cors.keithtechco.com"   http://localhost:8080/
 ```
 
 Each should return `200` (or a valid page/JSON response). Auth, sync, and sse
 are API-only services — they don't serve a web page at `/`, so use their
-health/OIDC endpoints. Attach and garage route to Garage S3 and return `403`
-without credentials — that's expected. Notes (Monograph) and cors return `200`
-pages/JSON at `/`.
+health/OIDC endpoints. Attach routes to Garage S3 and returns `403` without
+credentials — that's expected. Garage's web console (`garage.keithtechco.com`)
+runs on port 3902 internally and returns the web UI. Cors returns `200` JSON
+at `/`. Notes (Monograph) serves a full web page at `/`.
 
 **Note on root paths:** API servers (auth, sync, sse) don't serve a web page at
 `/` — auth uses `/.well-known/openid-configuration`, sync and sse have `/health`.

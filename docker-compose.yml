@@ -365,6 +365,7 @@ networks:
 volumes:
   dbdata:
   s3data:
+  garage-meta:
   caddy-data:
   dpdata-identity:
   dpdata-notesnook:

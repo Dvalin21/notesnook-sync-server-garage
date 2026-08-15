@@ -1,5 +1,5 @@
 # Notesnook Sync Stack — Internal Reverse Proxy (Garage S3 version)
-# Set SERVER_DOMAIN in .env to your domain (e.g. "example.com").
+# Set SERVER_DOMAIN in .env to your domain (e.g. "keithtechco.com").
 # Routes by Host header to the correct backend service.
 # TLS is handled by your external proxy — Caddy does plain HTTP internally.
 # When Host header is missing or unexpected, routes by URL path.
@@ -22,6 +22,7 @@
     @attach host attach.{$DOMAIN}
     @garage host garage.{$DOMAIN}
     @cors host cors.{$DOMAIN}
+    @debug host debug.{$DOMAIN}
 
     handle @sync {
         reverse_proxy notesnook-server:5264
@@ -36,17 +37,19 @@
         reverse_proxy monograph-server:3000
     }
     handle @attach {
-        reverse_proxy {$S3_BACKEND:-notesnook-s3:9000}
+        reverse_proxy {$S3_BACKEND:-garage:3900}
     }
     handle @garage {
-        reverse_proxy {$S3_CONSOLE_BACKEND:-garage:3900}
+        reverse_proxy {$S3_CONSOLE_BACKEND:-garage:3902}
     }
     handle @cors {
         reverse_proxy cors-proxy:3000
     }
+    handle @debug {
+        respond "Host: {host}\nDOMAIN: {$DOMAIN}\nS3_BACKEND: {$S3_BACKEND}\nS3_CONSOLE_BACKEND: {$S3_CONSOLE_BACKEND}\n"
+    }
 
-    # Path-based routing: for environments where the proxy strips or normalizes
-    # the Host header, route by URL path instead.
+    # Path-based routing as fallback (for when proxy strips/mangles Host header)
     @notes-path path /monograph/* /notes/* /api/* /assets/* /favicon*
     handle @notes-path {
         reverse_proxy monograph-server:3000
@@ -70,6 +73,11 @@
     @s3-path path /attachments/*
     handle @s3-path {
         reverse_proxy {$S3_BACKEND:-garage:3900}
+    }
+
+    @cors-path path /health
+    handle @cors-path {
+        reverse_proxy cors-proxy:3000
     }
 
     # Default: no match — return 404
