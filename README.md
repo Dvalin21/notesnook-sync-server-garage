@@ -5,7 +5,13 @@ storage backend. Fork of [streetwriters/notesnook-sync-server](https://github.co
 (based on the [Dvalin21](https://github.com/Dvalin21/notesnook-sync-server) variant).
 
 **This version uses Garage as the S3 backend.** No MinIO container — Garage provides
-S3-compatible storage with a built-in web console.
+S3-compatible storage. Note: Garage's web server on port 3902 is an S3 static
+website host (serves files from S3 buckets by Host header), not an admin console
+or bucket browser. For cluster/admin operations use the `garage` CLI:
+
+```bash
+docker exec notesnook-sync-server-garage-garage-1 /garage <command>
+```
 
 ## What's different from the MinIO version
 
@@ -103,9 +109,10 @@ curl -fsS -H "Host: cors.example.com"   http://localhost:8080/
 Each should return `200` (or a valid page/JSON response). Auth, sync, and sse
 are API-only services — they don't serve a web page at `/`, so use their
 health/OIDC endpoints. Attach routes to Garage S3 and returns `403` without
-credentials — that's expected. Garage's web console (`garage.example.com`)
-runs on port 3902 internally and returns the web UI. Cors returns `200` JSON
-at `/`. Notes (Monograph) serves a full web page at `/`.
+credentials — that's expected. Garage's web server (`garage.example.com`) on
+port 3902 is an S3 static website host — it returns `404` at `/` unless you've
+created a bucket named `garage.<domain>` with website configuration.
+Cors returns `200` JSON at `/`. Notes (Monograph) serves a full web page at `/`.
 
 **Note on root paths:** API servers (auth, sync, sse) don't serve a web page at
 `/` — auth uses `/.well-known/openid-configuration`, sync and sse have `/health`.
@@ -180,7 +187,7 @@ subdomains share one SSL cert. But you still need the 7 DNS A records.
 | `sse.example.com` | `sse-server:7264` |
 | `notes.example.com` | `monograph-server:3000` |
 | `attach.example.com` | `garage:3900` (S3 API) |
-| `garage.example.com` | `garage:3902` (S3 console UI) |
+|| `garage.example.com` | `garage:3902` (S3 static website host — serves files from S3 buckets by Host header; not an admin console) |
 | `cors.example.com` | `cors-proxy:3000` |
 
 ---
@@ -212,10 +219,15 @@ subdomains share one SSL cert. But you still need the 7 DNS A records.
 | `SMTP_USERNAME` | No | validate (warn if missing) | SMTP username. |
 | `SMTP_PASSWORD` | No | validate (warn if missing) | SMTP password. |
 | `SMTP_FROM_NAME` | No | identity-server | Name shown in SMTP-sent emails. Default: `Notesnook`. |
-| `NOTESNOOK_CORS_ORIGINS` | No | cors-proxy | Comma-separated list of allowed CORS origins. Default: `*`. |
-| `TWILIO_ACCOUNT_SID` | No | identity-server | Twilio account SID for SMS 2FA. |
-| `TWILIO_AUTH_TOKEN` | No | identity-server | Twilio auth token for SMS 2FA. |
-| `TWILIO_SERVICE_SID` | No | identity-server | Twilio service SID for SMS 2FA. |
+|| `NOTESNOOK_CORS_ORIGINS` | No | cors-proxy | Comma-separated list of allowed CORS origins. Default: `*`. |
+|| `CORS_PROXY_PUBLIC_URL` | No | web client, cors-proxy | Public URL for the CORS proxy service. Set to `https://cors.<SERVER_DOMAIN>`. |
+|| `CORS_PROXY_ALLOWED_ORIGINS` | No | cors-proxy | Allowed origins for the CORS proxy. Default: `*`. |
+|| `INBOX_API_PUBLIC_URL` | No | inbox-api (extras) | Public URL for the Inbox API. Only needed with `--profile extras`. |
+|| `THEMES_SERVER_PUBLIC_URL` | No | themes-server (extras) | Public URL for the Themes server. Only needed with `--profile extras`. |
+|| `THEMES_REPO_URL` | No | themes-server (extras) | Git URL for the Themes repository. Only needed with `--profile extras`. |
+|| `TWILIO_ACCOUNT_SID` | No | identity-server | Twilio account SID for SMS 2FA. |
+|| `TWILIO_AUTH_TOKEN` | No | identity-server | Twilio auth token for SMS 2FA. |
+|| `TWILIO_SERVICE_SID` | No | identity-server | Twilio service SID for SMS 2FA. |
 
 ---
 
@@ -267,11 +279,29 @@ used for uploading/downloading attachments.
 
 Open `https://notes.example.com` in a browser. Log in with your account.
 
-### Garage S3 console
+### Garage S3 static website host
 
-Open `https://garage.example.com` in a browser. Log in with the
-`GARAGE_ACCESS_KEY_ID` / `GARAGE_ACCESS_KEY_SECRET` from your `.env` to
-browse buckets and manage objects.
+Open `https://garage.example.com` in a browser. By default this returns `404`
+because Garage's web server is an S3 static website host — it maps the `Host`
+header to an S3 bucket name and serves files from that bucket. To serve content
+at `garage.<domain>`, create a bucket named `garage.<domain>` (e.g.
+(`garage.example.com`) and configure it as a website bucket with an
+`index.html` key.
+
+```bash
+docker exec notesnook-sync-server-garage-garage-1 /garage bucket create garage.example.com
+# Then upload an index.html to the bucket
+```
+
+For cluster/admin operations (listing buckets, nodes, layout, keys), use the
+Garage CLI:
+
+```bash
+docker exec notesnook-sync-server-garage-garage-1 /garage bucket list
+docker exec notesnook-sync-server-garage-garage-1 /garage admin status
+docker exec notesnook-sync-server-garage-garage-1 /garage layout show
+docker exec notesnook-sync-server-garage-garage-1 /garage node id
+```
 
 ### S3 attachments API
 
@@ -302,7 +332,7 @@ curl -fsS -H "Host: notes.example.com" http://localhost:8080/
 # Attach — S3 API (403 without auth = correct)
 curl -fsS -H "Host: attach.example.com" http://localhost:8080/
 
-# Garage — S3 console (403 without auth = correct)
+# Garage — S3 static website host (404 at / unless you've set up a website bucket)
 curl -fsS -H "Host: garage.example.com" http://localhost:8080/
 
 # Cors — CORS proxy JSON
@@ -411,7 +441,9 @@ Compared to the upstream [streetwriters/notesnook-sync-server](https://github.co
 4. **Healthchecks on all services** — `nc -z` for .NET services, `node` for cors-proxy, `bun` for monograph
 5. **Autoheal** — `willfarrell/autoheal` restarts unhealthy containers
 6. **Single-port model** — only Caddy exposes port 8080; all other services are internal
-7. **Garage S3 backend** — Garage provides S3-compatible storage with a built-in web console
+7. **Garage S3 backend** — Garage provides S3-compatible storage. Its web server
+   on port 3902 is an S3 static website host (serves files from S3 buckets by
+   Host header), not an admin console. Use the `garage` CLI for cluster/admin operations.
 
 ---
 
