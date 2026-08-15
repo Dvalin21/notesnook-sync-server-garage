@@ -4,8 +4,8 @@ Self-hosted Notesnook sync server with [Garage](https://garagehq.io/) as the S3
 storage backend. Fork of [streetwriters/notesnook-sync-server](https://github.com/streetwriters/notesnook-sync-server)
 (based on the [Dvalin21](https://github.com/Dvalin21/notesnook-sync-server) variant).
 
-**This version uses Garage instead of MinIO.** If you want MinIO, use the MinIO
-version of this repo instead.
+**This version uses Garage as the S3 backend.** No MinIO container — Garage provides
+S3-compatible storage with a built-in web console.
 
 ## What's different from the MinIO version
 
@@ -17,53 +17,6 @@ version of this repo instead.
 | MinIO container | Yes | No (saves resources) |
 | Caddy `S3_BACKEND` default | `notesnook-s3:9000` | `garage:3900` |
 | Caddy `S3_CONSOLE_BACKEND` default | `notesnook-s3:9090` | `garage:3900` |
-
-## Prerequisites
-
-- **Docker** + **Docker Compose v2**
-- **Domain with DNS control** (e.g. `keithtechco.com`)
-- **TLS reverse proxy** (Nginx Proxy Manager, Caddy, nginx, etc.) —
-  this stack does **not** handle TLS itself
-- **SMTP server** (optional — for email 2FA / password reset)
-- **Garage RPC secret** (generated below)
-
-## Architecture
-
-### Single port model
-
-By design, this stack publishes **one port** externally: host `:8080`.
-
-```
-Host :8080  →  Caddy :80  →  routes by Host header to correct backend
-```
-
-Internal ports `5264` / `8264` / `7264` / `3000` / `3900` are **NOT** exposed
-to the host or to clients. They're only reachable inside the Docker network.
-This is a security hardening over the upstream stack.
-
-### .env / subdomain mapping table
-
-| Variable | Client field | Caddy `Host:` | Internal target |
-|---|---|---|---|
-| `NOTESNOOK_APP_PUBLIC_URL` | Sync URL | `sync.example.com` | `notesnook-server:5264` |
-| `AUTH_SERVER_PUBLIC_URL` | Auth URL | `auth.example.com` | `identity-server:8264` |
-| `MONOGRAPH_PUBLIC_URL` | Web URL | `notes.example.com` | `monograph-server:3000` |
-| `ATTACHMENTS_SERVER_PUBLIC_URL` | Attachments URL | `attach.example.com` | `garage:3900` |
-
-Never mix these up. The Android client uses the first three exactly as shown
-above. The web client uses `MONOGRAPH_PUBLIC_URL`.
-
-### Caddy internal routing
-
-| Host header | Routes to |
-|---|---|
-| `sync.example.com` | `notesnook-server:5264` |
-| `auth.example.com` | `identity-server:8264` |
-| `sse.example.com` | `sse-server:7264` |
-| `notes.example.com` | `monograph-server:3000` |
-| `attach.keithtechco.com` | `garage:3900` (S3 API) |
-| `garage.keithtechco.com` | `garage:3900` (S3 console UI) |
-| `cors.example.com` | `cors-proxy:3000` |
 
 ---
 
@@ -83,103 +36,23 @@ cp .env.example .env
 nano .env
 ```
 
-Every `CHANGEME-*` value must be replaced. Here is every field explained:
+Fill in all the required values (see `.env.example` for placeholders and the
+table below for what each variable does). At minimum you MUST set:
 
-| Variable | Required in compose? | Notes |
-|---|---|---|
-| `SERVER_DOMAIN` | Yes — required by `validate` service + Caddy `{$DOMAIN}` templating | Your domain, e.g. `example.com` |
-| `INSTANCE_NAME` | Yes — required by `validate` service | Human name for this instance |
-| `NOTESNOOK_API_SECRET` | Yes — required by `validate` service + identity server | Generate with `openssl rand -base64 48` |
-| `DISABLE_SIGNUPS` | Yes — required by `validate` service | `false` to allow signups, `true` to lock down |
-| `NOTESNOOK_APP_PUBLIC_URL` | Yes — required by `validate` service | `https://sync.example.com` |
-| `AUTH_SERVER_PUBLIC_URL` | Yes — required by `validate` service | `https://auth.example.com` |
-| `MONOGRAPH_PUBLIC_URL` | Yes — required by `validate` service + monograph container | `https://notes.example.com` |
-| `ATTACHMENTS_SERVER_PUBLIC_URL` | Yes — required by `validate` service | `https://attach.example.com` |
-| `GARAGE_RPC_SECRET` | Yes — required by Garage container | 32-byte hex. Generate with `openssl rand -hex 32` |
-| `GARAGE_ACCESS_KEY_ID` | Yes — required by `setup-garage` service | S3 access key. Generate with `openssl rand -base64 12` |
-| `GARAGE_ACCESS_KEY_SECRET` | Yes — required by `setup-garage` service | S3 secret key. Generate with `openssl rand -base64 24` |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` | No — optional, warn if missing | Leave blank if not using email features |
-| `NOTESNOOK_CORS_ORIGINS` | No — used by `cors-proxy` only | Comma-separated origins, default `*`. Not checked by `validate`; the `cors-proxy` container receives it via env_file. |
-| `TWILIO_*` | No — optional, passed to all services | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_SERVICE_SID` for SMS 2FA via `SMSSender`. Leave empty to disable SMS 2FA. |
+- `NOTESNOOK_API_SECRET` — random secret for token signing
+- `GARAGE_RPC_SECRET` — 32-byte hex for Garage RPC encryption
+- `GARAGE_ACCESS_KEY_ID` — S3 access key
+- `GARAGE_ACCESS_KEY_SECRET` — S3 secret key
+- `SERVER_DOMAIN` — your domain (e.g. `keithtechco.com`)
 
-### 3. Configure your TLS reverse proxy
+### 3. Create the S3 bucket (first run only)
 
-This stack does **not** handle TLS itself. You need an external proxy that:
+The `setup-garage` service in the compose file creates the `attachments` bucket
+automatically on first boot. It uses the credentials from your `.env`. If you
+ever need to run it manually:
 
-1. Terminates TLS for `*.example.com`
-2. Forwards all requests to `http://<your-server-ip>:8080`
-3. Preserves the original `Host:` header (this is how Caddy routes internally)
-
-**Nginx Proxy Manager (NPM) — recommended:**
-
-1. In NPM, go to **Proxies → Add Proxy Host**
-2. Create proxy hosts for each subdomain (or one wildcard — see below)
-
-**Option A — One wildcard proxy host** (simplest):
-
-| Field | Value |
-|---|---|
-| Domain Name | `*.example.com` (wildcard) |
-| Forward Hostname / IP | `<your-server-ip>` |
-| Forward Port | `8080` |
-| Scheme | `http` |
-| Force SSL | On |
-| HTTP → HTTPS Redirect | On |
-| SSL | Let's Encrypt (or your own cert) |
-| Secure | On |
-| Block common exploits | On |
-| Websockets Support | On |
-
-**Critical:** In the Advanced tab, add this to ensure the Host header is preserved:
-
-```
-proxy_set_header Host $host;
-proxy_set_header X-Real-IP $remote_addr;
-proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-proxy_set_header X-Forwarded-Proto $scheme;
-```
-
-NPM usually preserves the Host header by default, but if Caddy routing breaks
-(502 errors), add this explicitly.
-
-**Option B — 7 individual proxy hosts** (if your apex hosts your own website):
-
-Create 7 proxy hosts — one per subdomain — all pointing to
-`http://<your-server-ip>:8080`:
-
-1. `auth.example.com`
-2. `sync.example.com`
-3. `sse.example.com`
-4. `notes.example.com`
-5. `attach.example.com`
-6. `garage.example.com`
-7. `cors.example.com`
-
-Leave `example.com` (apex) alone — keep your existing website config.
-A wildcard `*.example.com` would also match the apex and send that traffic
-to this Caddy (which returns 404), breaking your site.
-
-**If using Caddy as your external proxy:**
-
-```caddy
-*.example.com {
-    reverse_proxy localhost:8080
-}
-```
-
-**If using nginx:**
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name *.example.com;
-    ssl_certificate /path/to/cert.pem;
-    ssl_certificate_key /path/to/key.pem;
-    location / {
-        proxy_pass http://localhost:8080;
-        proxy_set_header Host $host;
-    }
-}
+```bash
+docker compose run --rm setup-garage
 ```
 
 ### 4. Start the stack
@@ -236,106 +109,282 @@ at `/`. Notes (Monograph) serves a full web page at `/`.
 
 **Note on root paths:** API servers (auth, sync, sse) don't serve a web page at
 `/` — auth uses `/.well-known/openid-configuration`, sync and sse have `/health`.
-The CORS proxy (`cors.example.com`) returns JSON at `/`. Garage console and
-Monograph serve full web pages at `/`.
+Monograph serves the full web client. Cors is a JSON API. Attach and garage are
+S3 endpoints that require auth (403 without credentials).
 
-### 6. Garage console
+### 6. Configure Nginx Proxy Manager (or your TLS proxy)
 
-Open `https://garage.example.com` in a browser. You'll see the Garage login
-page. Log in with:
+The stack only exposes port 8080 on the host. You need a TLS proxy in front of it
+to serve HTTPS. Nginx Proxy Manager (NPM) is the recommended option.
 
-- **Access key:** value of `GARAGE_ACCESS_KEY_ID` in `.env`
-- **Secret key:** value of `GARAGE_ACCESS_KEY_SECRET` in `.env`
+**Prerequisites:**
 
-You should see the `attachments` bucket created by `setup-garage`.
+- NPM installed and reachable from the internet
+- DNS records for all subdomains pointing to your server's public IP
 
-### 7. Connect clients
+**DNS records needed (7 subdomains + apex if you want):**
 
-**Android app — Server URLs:**
-
-Open the Notesnook app → Settings → Sync → "Use custom server" (or similar).
-Enter these exact values:
-
-| Field in app | Value |
-|---|---|
-| Auth URL / Identity server | `https://auth.example.com` |
-| Sync URL / Sync server | `https://sync.example.com` |
-| Attachments URL / S3 URL | `https://attach.example.com` |
-| Monograph URL (web only) | `https://notes.example.com` |
-
-After entering these, tap **Test connection** (if available), then **Save**.
-Then use **Sign up** or **Log in** to create your account.
-
-**Desktop app — Server URLs:**
-
-Settings → Servers → Add custom server. Same URLs as above.
-
-**Web browser:**
-
-Navigate to `https://notes.example.com` for the Monograph web client (read-only
-note sharing — no account management).
-
----
-
-## Test connection from the Android app
-
-After entering the server URLs in the app's custom server settings:
-
-1. Tap **Test connection** or **Verify** (if the app has this button)
-2. The app should reach `AUTH_SERVER_PUBLIC_URL` and discover the OIDC metadata
-3. Then it should reach `NOTESNOOK_APP_PUBLIC_URL` and confirm the sync endpoint
-4. If both succeed, save the configuration
-5. Use **Sign up** to create your first account (if `DISABLE_SIGNUPS=false`)
-
-If the test fails:
-
-| Symptom | Likely cause | Fix |
+| Host | Type | Value |
 |---|---|---|
-| "Cannot reach server" / timeout | URLs are wrong or server not reachable from the device | Verify the URLs resolve from your phone's network. Check that port 8080 is reachable. |
-| SSL certificate error | Self-signed cert or wrong domain in URL | Make sure you're using `https://` with a valid certificate for the exact domain. |
-| "Invalid server" / "Not a Notesnook server" | The URL points to the wrong service or returns an error | Double-check that `AUTH_SERVER_PUBLIC_URL` points to `auth.example.com` (identity server), not the sync server. |
-| Signup fails after successful test | `DISABLE_SIGNUPS=true` or SMTP issue | Set `DISABLE_SIGNUPS=false` temporarily, restart identity-server, try again. |
+| `auth.keithtechco.com` | A / CNAME | your server IP |
+| `sync.keithtechco.com` | A / CNAME | your server IP |
+| `sse.keithtechco.com` | A / CNAME | your server IP |
+| `notes.keithtechco.com` | A / CNAME | your server IP |
+| `attach.keithtechco.com` | A / CNAME | your server IP |
+| `garage.keithtechco.com` | A / CNAME | your server IP |
+| `cors.keithtechco.com` | A / CNAME | your server IP |
+
+**Apex domain:** If `keithtechco.com` already hosts a website on a different
+server, do NOT create a proxy host for it. Leave it alone. The 7 subdomains
+above are all that this stack needs.
+
+**NPM proxy hosts (create 7, one per subdomain):**
+
+For each subdomain (`auth.`, `sync.`, `sse.`, `notes.`, `attach.`, `garage.`, `cors.`):
+
+1. **Proxy Host** → **Add Proxy Host**
+2. **Details tab:**
+   - Domain Name: `auth.keithtechco.com` (etc.)
+   - Scheme: `http`
+   - Forward Host: `<your-server-ip>`
+   - Forward Port: `8080`
+   - Cache: off
+   - Block common exploits: on (optional)
+3. **SSL tab:** Request a new certificate (Let's Encrypt) for each subdomain,
+   enable force HTTPS.
+4. **Advanced tab** (important — copy this into each proxy host):
+
+```
+proxy_set_header Host $host;
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;
+```
+
+The `proxy_set_header Host $host;` line is critical — it preserves the original
+Host header so Caddy can route by subdomain. Without it, all requests reach Caddy
+with the same Host (your server IP) and routing breaks.
+
+**Alternative: wildcard certificate + single proxy host**
+
+If you have a wildcard certificate (`*.keithtechco.com`), you can create a single
+NPM proxy host with `*.keithtechco.com` → `http://<ip>:8080`. Then all 7
+subdomains share one SSL cert. But you still need the 7 DNS A records.
+
+**Caddy internal routing (for reference):**
+
+| Host header | Routes to |
+|---|---|
+| `sync.keithtechco.com` | `notesnook-server:5264` |
+| `auth.keithtechco.com` | `identity-server:8264` |
+| `sse.keithtechco.com` | `sse-server:7264` |
+| `notes.keithtechco.com` | `monograph-server:3000` |
+| `attach.keithtechco.com` | `garage:3900` (S3 API) |
+| `garage.keithtechco.com` | `garage:3902` (S3 console UI) |
+| `cors.keithtechco.com` | `cors-proxy:3000` |
 
 ---
 
-## Garage admin login
+## Environment variables
 
-- Console URL: **https://garage.example.com** (routed via Caddy)
-- S3 API URL: **https://attach.example.com** (used by the Notesnook app)
-- Username: value of `GARAGE_ACCESS_KEY_ID` in `.env`
-- Password: value of `GARAGE_ACCESS_KEY_SECRET` in `.env`
+### Required
+
+| Variable | Required | Used by | Description |
+|---|---|---|---|
+| `SERVER_DOMAIN` | Yes — Caddy routing | caddy | Your domain (e.g. `keithtechco.com`). Used for Host header matching. |
+| `INSTANCE_NAME` | Yes | validate, identity-server | Display name for your Notesnook server. |
+| `NOTESNOOK_API_SECRET` | Yes | validate, identity-server, notesnook-server | API auth token secret. Generate with `openssl rand -base64 48`. |
+| `DISABLE_SIGNUPS` | Yes | identity-server | `true` = no new accounts. Set to `false` temporarily to create your first account, then set back to `true`. |
+| `AUTH_SERVER_PUBLIC_URL` | Yes | Android app, web client | Public URL for the auth server. Must be `https://auth.<SERVER_DOMAIN>`. |
+| `NOTESNOOK_APP_PUBLIC_URL` | Yes | Android app | Public URL for the sync server. Must be `https://sync.<SERVER_DOMAIN>`. |
+| `MONOGRAPH_PUBLIC_URL` | Yes | Web client | Public URL for the Monograph web client. Must be `https://notes.<SERVER_DOMAIN>`. |
+| `ATTACHMENTS_SERVER_PUBLIC_URL` | Yes | Android app | Public URL for S3 attachments. Must be `https://attach.<SERVER_DOMAIN>`. |
+| `GARAGE_RPC_SECRET` | Yes — Garage | garage | 32-byte hex for Garage RPC encryption. Generate with `openssl rand -hex 32`. |
+| `GARAGE_ACCESS_KEY_ID` | Yes — setup-garage | setup-garage, notesnook-server | S3 access key ID. Generate with `openssl rand -base64 12`. |
+| `GARAGE_ACCESS_KEY_SECRET` | Yes — setup-garage | setup-garage, notesnook-server | S3 secret access key. Generate with `openssl rand -base64 24`. |
+
+### Optional
+
+| Variable | Required | Used by | Description |
+|---|---|---|---|
+| `SMTP_HOST` | No | validate (warn if missing) | SMTP server hostname. |
+| `SMTP_PORT` | No | validate (warn if missing) | SMTP server port. |
+| `SMTP_USERNAME` | No | validate (warn if missing) | SMTP username. |
+| `SMTP_PASSWORD` | No | validate (warn if missing) | SMTP password. |
+| `SMTP_FROM_NAME` | No | identity-server | Name shown in SMTP-sent emails. Default: `Notesnook`. |
+| `NOTESNOOK_CORS_ORIGINS` | No | cors-proxy | Comma-separated list of allowed CORS origins. Default: `*`. |
+| `TWILIO_ACCOUNT_SID` | No | identity-server | Twilio account SID for SMS 2FA. |
+| `TWILIO_AUTH_TOKEN` | No | identity-server | Twilio auth token for SMS 2FA. |
+| `TWILIO_SERVICE_SID` | No | identity-server | Twilio service SID for SMS 2FA. |
 
 ---
 
-## Maintenance
+## Adding Garage to an existing MinIO base stack
 
-### Backups
+If you already have the MinIO version of this stack running and want to
+switch to Garage, use the overlay compose file:
 
 ```bash
-# MongoDB
-docker compose exec notesnook-db mongodump \
-  --uri="mongodb://notesnook-db:27017/notesnook" \
-  --archive=/backup/notesnook-$(date +%Y%m%d).archive
+docker compose -f docker-compose.yml -f docker-compose.garage/docker-compose.garage.yml up -d
+```
 
-# Garage attachments (from host)
+The overlay:
+- Replaces the `notesnook-s3` MinIO service with `garage`
+- Overrides `setup-s3` with `setup-garage` (python3 SigV4)
+- Overrides Caddy environment variables to point `S3_BACKEND` and `S3_CONSOLE_BACKEND` at `garage:3900`
+- Adds `garage` to the `notesnook` network
+
+See `docker-compose.garage/README.md` in this repo for details.
+
+---
+
+## Usage
+
+### First account
+
+1. Set `DISABLE_SIGNUPS=false` in `.env`
+2. Restart: `docker compose restart identity-server`
+3. Open `https://sync.keithtechco.com` in a browser (or use the Notesnook Android app)
+4. Create your account
+5. Set `DISABLE_SIGNUPS=true` in `.env`
+6. Restart: `docker compose restart identity-server`
+
+### Android app configuration
+
+In the Notesnook Android app, go to Settings → Sync → Custom server and enter:
+
+| Field | Value |
+|---|---|
+| Server URL | `https://auth.keithtechco.com` |
+| Sync URL | `https://sync.keithtechco.com` |
+| Attachments URL | `https://attach.keithtechco.com` |
+
+The app uses `AUTH_SERVER_PUBLIC_URL` for OIDC discovery (login/OAuth) and
+`NOTESNOOK_APP_PUBLIC_URL` for note sync. `ATTACHMENTS_SERVER_PUBLIC_URL` is
+used for uploading/downloading attachments.
+
+### Web client
+
+Open `https://notes.keithtechco.com` in a browser. Log in with your account.
+
+### Garage S3 console
+
+Open `https://garage.keithtechco.com` in a browser. Log in with the
+`GARAGE_ACCESS_KEY_ID` / `GARAGE_ACCESS_KEY_SECRET` from your `.env` to
+browse buckets and manage objects.
+
+### S3 attachments API
+
+The Notesnook app uses `https://attach.keithtechco.com` for S3 operations.
+It authenticates with the `GARAGE_ACCESS_KEY_ID` / `GARAGE_ACCESS_KEY_SECRET`
+credentials. You don't need to do anything special — the app handles this
+automatically once the URLs are configured.
+
+---
+
+## Testing
+
+### From the host
+
+```bash
+# Auth — OIDC discovery
+curl -fsS -H "Host: auth.keithtechco.com" http://localhost:8080/.well-known/openid-configuration
+
+# Sync — health
+curl -fsS -H "Host: sync.keithtechco.com" http://localhost:8080/health
+
+# SSE — health
+curl -fsS -H "Host: sse.keithtechco.com" http://localhost:8080/health
+
+# Monograph — web client HTML
+curl -fsS -H "Host: notes.keithtechco.com" http://localhost:8080/
+
+# Attach — S3 API (403 without auth = correct)
+curl -fsS -H "Host: attach.keithtechco.com" http://localhost:8080/
+
+# Garage — S3 console (403 without auth = correct)
+curl -fsS -H "Host: garage.keithtechco.com" http://localhost:8080/
+
+# Cors — CORS proxy JSON
+curl -fsS -H "Host: cors.keithtechco.com" http://localhost:8080/
+```
+
+### From another machine (through NPM)
+
+Replace `localhost:8080` with `https://auth.keithtechco.com` (etc.) and test
+the HTTPS endpoints. Make sure DNS resolves and the NPM proxy hosts are
+configured with `proxy_set_header Host $host;`.
+
+---
+
+## Garage management
+
+### Create a bucket manually
+
+```bash
+docker run --rm \
+  -e GARAGE_ACCESS_KEY_ID="your-key" \
+  -e GARAGE_ACCESS_KEY_SECRET="your-secret" \
+  -e GARAGE_HOST=garage \
+  -e GARAGE_S3_PORT=3900 \
+  --network notesnook-sync-server-garage_notesnook \
+  python:3.12-slim python3 -c "
+import os, sys
+sys.path.insert(0, '/scripts')
+from setup_garage import create_bucket
+create_bucket(os.environ.get('GARAGE_HOST', 'garage'),
+              int(os.environ.get('GARAGE_S3_PORT', '3900')),
+              os.environ['GARAGE_ACCESS_KEY_ID'],
+              os.environ['GARAGE_ACCESS_KEY_SECRET'],
+              'my-new-bucket')
+"
+```
+
+Or use the Garage web console at `https://garage.keithtechco.com`.
+
+### Access the Garage admin API
+
+Garage exposes an admin API on port 3903:
+
+```bash
+curl -s http://localhost:3903/cluster
+```
+
+### Backup Garage data
+
+```bash
+# Garage data (from host)
 docker run --rm -v notesnook-sync-server-garage_s3data:/data -v /backup/s3:/backup \
   alpine tar czf /backup/s3/garage-$(date +%Y%m%d).tar.gz -C /data .
+
+# Garage metadata (from host)
+docker run --rm -v notesnook-sync-server-garage_garage-meta:/data -v /backup/meta:/backup \
+  alpine tar czf /backup/meta/garage-meta-$(date +%Y%m%d).tar.gz -C /data .
 ```
 
-### Updates
+### Restore Garage data
 
 ```bash
-git pull
-docker compose pull
+# Stop the stack
+docker compose down
+
+# Remove existing data volumes
+docker volume rm notesnook-sync-server-garage_s3data
+docker volume rm notesnook-sync-server-garage_garage-meta
+
+# Create fresh volumes and restore
+docker volume create notesnook-sync-server-garage_s3data
+docker volume create notesnook-sync-server-garage_garage-meta
+
+docker run --rm -v notesnook-sync-server-garage_s3data:/data -v /backup/s3:/backup \
+  alpine tar xzf /backup/s3/garage-20260815.tar.gz -C /data
+
+docker run --rm -v notesnook-sync-server-garage_garage-meta:/data -v /backup/meta:/backup \
+  alpine tar xzf /backup/meta/garage-meta-20260815.tar.gz -C /data
+
+# Restart
 docker compose up -d
 ```
-
-### Disaster recovery: DataProtection keys
-
-The DataProtection volumes (`dpdata-identity`, `dpdata-notesnook`,
-`dpdata-sse`, `dpdata-monograph`) contain encryption keys that the .NET
-services use to protect data at rest. If you lose these volumes, users will
-be locked out of their data. Back them up along with the database.
 
 ---
 
@@ -357,13 +406,12 @@ be locked out of their data. Back them up along with the database.
 Compared to the upstream [streetwriters/notesnook-sync-server](https://github.com/streetwriters/notesnook-sync-server):
 
 1. **MongoDB 8.0.28** instead of 7.0.x — same binary, newer version
-2. **MinIO pinned to `RELEASE.2025-09-07T16-13-09Z`** — avoids upstream drift
-3. **Validation service** — checks required env vars before the stack starts
-4. **DataProtection volume persistence** — `init-dpdata` service sets ownership
-5. **Healthchecks on all services** — `nc -z` for .NET services, `node` for cors-proxy, `bun` for monograph
-6. **Autoheal** — `willfarrell/autoheal` restarts unhealthy containers
-7. **Single-port model** — only Caddy exposes port 8080; all other services are internal
-8. **Garage S3 backend** — replaces MinIO with Garage for S3-compatible storage
+2. **Validation service** — checks required env vars before the stack starts
+3. **DataProtection volume persistence** — `init-dpdata` service sets ownership
+4. **Healthchecks on all services** — `nc -z` for .NET services, `node` for cors-proxy, `bun` for monograph
+5. **Autoheal** — `willfarrell/autoheal` restarts unhealthy containers
+6. **Single-port model** — only Caddy exposes port 8080; all other services are internal
+7. **Garage S3 backend** — Garage provides S3-compatible storage with a built-in web console
 
 ---
 
