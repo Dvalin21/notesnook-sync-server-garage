@@ -1,0 +1,372 @@
+# Notesnook Sync Server (Garage S3 edition) — Docker Compose
+# Complete self-hosted setup: Garage S3 + Caddy + MongoDB 8.0.28
+#
+# Architecture:
+#   External TLS proxy (nginx proxy manager, etc.) → host:8080 → Caddy :80 → backends
+#   Caddy routes by Host header. Only port 8080 is exposed to the host.
+#   All service ports (5264, 8264, 7264, 3000, 3900) are INTERNAL ONLY.
+#
+# Garage S3 backend (replaces MinIO).
+# The S3 console is at garage.<SERVER_DOMAIN>, the S3 API at attach.<SERVER_DOMAIN>.
+
+x-server-discovery: &server-discovery
+  NOTESNOOK_SERVER_PORT: 5264
+  NOTESNOOK_SERVER_HOST: notesnook-server
+  IDENTITY_SERVER_PORT: 8264
+  IDENTITY_SERVER_HOST: identity-server
+  SSE_SERVER_PORT: 7264
+  SSE_SERVER_HOST: sse-server
+  SELF_HOSTED: 1
+  IDENTITY_SERVER_URL: ${AUTH_SERVER_PUBLIC_URL}
+  NOTESNOOK_APP_HOST: ${NOTESNOOK_APP_PUBLIC_URL}
+
+x-env-files: &env-files
+  - .env
+
+services:
+  validate:
+    image: vandot/alpine-bash
+    entrypoint: /bin/bash
+    env_file: *env-files
+    command:
+      - -c
+      - |
+        required_vars=(
+          "SERVER_DOMAIN"
+          "INSTANCE_NAME"
+          "NOTESNOOK_API_SECRET"
+          "DISABLE_SIGNUPS"
+          "AUTH_SERVER_PUBLIC_URL"
+          "NOTESNOOK_APP_PUBLIC_URL"
+          "MONOGRAPH_PUBLIC_URL"
+          "ATTACHMENTS_SERVER_PUBLIC_URL"
+          "GARAGE_RPC_SECRET"
+          "GARAGE_ACCESS_KEY_ID"
+          "GARAGE_ACCESS_KEY_SECRET"
+        )
+        for var in "$${required_vars[@]}"; do
+          if [ -z "$${!var}" ]; then
+            echo "Error: Required environment variable $$var is not set."
+            exit 1
+          fi
+        done
+        echo "All required environment variables are set."
+        if [ -z "$$SMTP_HOST" ] || [ -z "$$SMTP_PORT" ] || [ -z "$$SMTP_USERNAME" ] || [ -z "$$SMTP_PASSWORD" ]; then
+          printf '\n  ================================================================================\n  WARNING: SMTP IS NOT CONFIGURED\n  ================================================================================\n  Email 2FA codes and password-reset emails will NOT be sent.\n\n  Newly created users MUST switch 2FA to an Authenticator app:\n    Settings > Auth > Change 2FA method\n\n  Configure SMTP_* in .env if you need email-based 2FA or password reset.\n  ================================================================================\n\n'
+        fi
+    restart: "no"
+
+  init-dpdata:
+    image: alpine:latest
+    restart: "no"
+    volumes:
+      - dpdata-identity:/data/identity
+      - dpdata-notesnook:/data/notesnook
+      - dpdata-sse:/data/sse
+      - dpdata-monograph:/data/monograph
+    depends_on:
+      validate:
+        condition: service_completed_successfully
+    command:
+      - sh
+      - -c
+      - |
+        echo "Setting DataProtection volume permissions..."
+        chown -R 1000:1000 /data/identity /data/notesnook /data/sse /data/monograph
+        echo "Done."
+
+  notesnook-db:
+    image: mongo:8.0.28
+    hostname: notesnook-db
+    restart: unless-stopped
+    volumes:
+      - dbdata:/data/db
+    networks:
+      - notesnook
+    command: --replSet rs0 --bind_ip_all
+    depends_on:
+      validate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: echo 'try { rs.status() } catch (err) { rs.initiate() }; db.runCommand("ping").ok' | mongosh mongodb://localhost:27017 --quiet
+      interval: 40s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 4G
+        reservations:
+          cpus: "1"
+          memory: 1G
+
+  garage:
+    image: dxflrs/garage:v2.1.0
+    restart: unless-stopped
+    volumes:
+      - s3data:/var/lib/garage/data
+      - garage-meta:/var/lib/garage/meta
+      - ./docker-compose.garage/garage.toml:/etc/garage.toml:ro
+    environment:
+      - GARAGE_RPC_SECRET=${GARAGE_RPC_SECRET:-}
+    networks:
+      - notesnook
+    depends_on:
+      validate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/garage", "admin", "status"]
+      interval: 40s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+
+  setup-garage:
+    image: python:3.12-slim
+    restart: "no"
+    depends_on:
+      garage:
+        condition: service_started
+    networks:
+      - notesnook
+    env_file: .env
+    environment:
+      - GARAGE_ACCESS_KEY_ID=${GARAGE_ACCESS_KEY_ID:-}
+      - GARAGE_ACCESS_KEY_SECRET=${GARAGE_ACCESS_KEY_SECRET:-}
+      - GARAGE_HOST=garage
+      - GARAGE_S3_PORT=3900
+      - BUCKET_NAME=attachments
+    volumes:
+      - ./docker-compose.garage/setup-garage.sh:/setup-garage.sh:ro
+    entrypoint: /usr/local/bin/python3
+    command: ["/setup-garage.sh"]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+
+  identity-server:
+    image: streetwriters/identity:v1.0-beta.32
+    restart: unless-stopped
+    volumes:
+      - dpdata-identity:/app/.aspnet/DataProtection-Keys
+    networks:
+      - notesnook
+    env_file: *env-files
+    depends_on:
+      init-dpdata:
+        condition: service_completed_successfully
+      notesnook-db:
+        condition: service_started
+    environment:
+      <<: *server-discovery
+      MONGODB_CONNECTION_STRING: mongodb://notesnook-db:27017/identity?replSet=rs0
+      MONGODB_DATABASE_NAME: identity
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "8264"]
+      interval: 40s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+
+  notesnook-server:
+    image: streetwriters/notesnook-sync:v1.0-beta.32
+    restart: unless-stopped
+    volumes:
+      - dpdata-notesnook:/app/.aspnet/DataProtection-Keys
+    networks:
+      - notesnook
+    env_file: *env-files
+    depends_on:
+      garage:
+        condition: service_started
+      setup-garage:
+        condition: service_completed_successfully
+      identity-server:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "5264"]
+      interval: 40s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+    environment:
+      <<: *server-discovery
+      MONGODB_CONNECTION_STRING: mongodb://notesnook-db:27017/?replSet=rs0
+      MONGODB_DATABASE_NAME: notesnook
+      S3_INTERNAL_SERVICE_URL: "http://garage:3900"
+      S3_INTERNAL_BUCKET_NAME: "attachments"
+      S3_ACCESS_KEY_ID: "${GARAGE_ACCESS_KEY_ID:-}"
+      S3_ACCESS_KEY: "${GARAGE_ACCESS_KEY_SECRET:-}"
+      S3_SERVICE_URL: "${ATTACHMENTS_SERVER_PUBLIC_URL}"
+      S3_REGION: "us-east-1"
+      S3_BUCKET_NAME: "attachments"
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+
+  sse-server:
+    image: streetwriters/sse:v1.0-beta.32
+    restart: unless-stopped
+    volumes:
+      - dpdata-sse:/app/.aspnet/DataProtection-Keys
+    networks:
+      - notesnook
+    env_file: *env-files
+    depends_on:
+      - identity-server
+      - notesnook-server
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "7264"]
+      interval: 40s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+    environment:
+      <<: *server-discovery
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+
+  monograph-server:
+    image: streetwriters/monograph:1.3.1
+    restart: unless-stopped
+    volumes:
+      - dpdata-monograph:/app/.aspnet/DataProtection-Keys
+    networks:
+      - notesnook
+    env_file: *env-files
+    depends_on:
+      - notesnook-server
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r => process.exit(r.ok?0:1)).catch(() => process.exit(1))"]
+      interval: 40s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+    environment:
+      <<: *server-discovery
+      API_HOST: http://notesnook-server:5264
+      PUBLIC_URL: ${MONOGRAPH_PUBLIC_URL}
+      HOST: "0.0.0.0"
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+
+  cors-proxy:
+    build: ./cors-proxy
+    restart: unless-stopped
+    networks:
+      - notesnook
+    env_file: *env-files
+    environment:
+      PORT: 3000
+      HOST: "0.0.0.0"
+      ALLOWED_ORIGINS: "${NOTESNOOK_CORS_ORIGINS}"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r => process.exit(r.ok?0:1)).catch(() => process.exit(1))"]
+      interval: 40s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+        reservations:
+          cpus: "0.1"
+          memory: 32M
+
+  caddy:
+    image: caddy:alpine
+    restart: unless-stopped
+    ports:
+      - 8080:80
+    networks:
+      - notesnook
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    environment:
+      DOMAIN: "${SERVER_DOMAIN:-localhost}"
+      S3_BACKEND: "${S3_BACKEND:-garage:3900}"
+      S3_CONSOLE_BACKEND: "${S3_CONSOLE_BACKEND:-garage:3900}"
+    depends_on:
+      notesnook-server:
+        condition: service_started
+      identity-server:
+        condition: service_started
+      sse-server:
+        condition: service_started
+      monograph-server:
+        condition: service_started
+      garage:
+        condition: service_started
+      cors-proxy:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+        reservations:
+          cpus: "0.1"
+          memory: 32M
+
+  autoheal:
+    image: willfarrell/autoheal:latest
+    restart: always
+    tty: true
+    environment:
+      AUTOHEAL_INTERVAL: 60
+      AUTOHEAL_START_PERIOD: 300
+      AUTOHEAL_DEFAULT_STOP_TIMEOUT: 10
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+networks:
+  notesnook:
+
+volumes:
+  dbdata:
+  s3data:
+  caddy-data:
+  dpdata-identity:
+  dpdata-notesnook:
+  dpdata-sse:
+  dpdata-monograph:

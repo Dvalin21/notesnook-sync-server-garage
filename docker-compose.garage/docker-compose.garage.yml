@@ -1,0 +1,110 @@
+# Garage S3 overlay for notesnook-sync-server
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f examples/garage/docker-compose.garage.yml up -d
+#
+# Replaces MinIO with Garage S3-compatible object storage.
+# Garage image: dxflrs/garage:v2.1.0
+# S3 API: port 3900 (internal)
+#
+# How this works: the overlay redefines notesnook-s3 and setup-s3 as no-ops so
+# the base compose dependencies are satisfied, then adds garage + setup-garage.
+# notesnook-server's S3 env vars are overridden to point at garage:3900.
+
+services:
+  # No-op MinIO placeholder. The real S3 backend is garage.
+  notesnook-s3:
+    image: alpine:latest
+    restart: unless-stopped
+    command: ["sleep", "infinity"]
+    networks:
+      - notesnook
+
+  # No-op setup-s3 placeholder. Exits immediately with success.
+  # Overrides base setup-s3 (minio/mc + /bin/bash) entirely.
+  setup-s3:
+    image: alpine:latest
+    restart: "no"
+    entrypoint: ["/bin/true"]
+    command: []
+    networks:
+      - notesnook
+
+  # Garage S3-compatible object storage (replaces MinIO)
+  garage:
+    image: dxflrs/garage:v2.1.0
+    restart: unless-stopped
+    volumes:
+      - s3data:/var/lib/garage/data
+      - garage-meta:/var/lib/garage/meta
+      - ./examples/garage/garage.toml:/etc/garage.toml:ro
+    environment:
+      - GARAGE_RPC_SECRET=${GARAGE_RPC_SECRET:-}
+    networks:
+      - notesnook
+    depends_on:
+      validate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/garage", "admin", "status"]
+      interval: 40s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+
+  # Bucket creation for Garage (replaces setup-s3's bucket creation)
+  setup-garage:
+    image: python:3.12-slim
+    restart: "no"
+    depends_on:
+      garage:
+        condition: service_started
+    networks:
+      - notesnook
+    env_file: .env
+    environment:
+      - GARAGE_ACCESS_KEY_ID=${GARAGE_ACCESS_KEY_ID:-}
+      - GARAGE_ACCESS_KEY_SECRET=${GARAGE_ACCESS_KEY_SECRET:-}
+      - GARAGE_HOST=garage
+      - GARAGE_S3_PORT=3900
+      - BUCKET_NAME=attachments
+    volumes:
+      - ./examples/garage/setup-garage.sh:/setup-garage.sh:ro
+    entrypoint: /usr/local/bin/python3
+    command: ["/setup-garage.sh"]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+
+  # Override notesnook-server: point S3 at garage instead of minio
+  notesnook-server:
+    depends_on:
+      setup-garage:
+        condition: service_completed_successfully
+      garage:
+        condition: service_started
+      identity-server:
+        condition: service_started
+    environment:
+      S3_INTERNAL_SERVICE_URL: "http://garage:3900"
+      S3_INTERNAL_BUCKET_NAME: "attachments"
+      S3_ACCESS_KEY_ID: "${GARAGE_ACCESS_KEY_ID:-}"
+      S3_ACCESS_KEY: "${GARAGE_ACCESS_KEY_SECRET:-}"
+      S3_SERVICE_URL: "${ATTACHMENTS_SERVER_PUBLIC_URL}"
+      S3_REGION: "us-east-1"
+      S3_BUCKET_NAME: "attachments"
+
+# Override MinIO volumes — keep the names so existing data is reused if switching back
+volumes:
+  s3data:
+  garage-meta:

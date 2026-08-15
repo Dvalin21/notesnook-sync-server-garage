@@ -1,0 +1,77 @@
+# Notesnook Sync Stack — Internal Reverse Proxy (Garage S3 version)
+# Set SERVER_DOMAIN in .env to your domain (e.g. "example.com").
+# Routes by Host header to the correct backend service.
+# TLS is handled by your external proxy — Caddy does plain HTTP internally.
+# When Host header is missing or unexpected, routes by URL path.
+
+{
+    auto_https off
+    admin off
+}
+
+:80 {
+    handle /health {
+        respond "Healthy"
+    }
+
+    # Route by Host header (primary mechanism when TLS proxy preserves Host)
+    @sync host sync.{$DOMAIN}
+    @auth host auth.{$DOMAIN}
+    @sse host sse.{$DOMAIN}
+    @monograph host notes.{$DOMAIN}
+    @attach host attach.{$DOMAIN}
+    @garage host garage.{$DOMAIN}
+    @cors host cors.{$DOMAIN}
+
+    handle @sync {
+        reverse_proxy notesnook-server:5264
+    }
+    handle @auth {
+        reverse_proxy identity-server:8264
+    }
+    handle @sse {
+        reverse_proxy sse-server:7264
+    }
+    handle @monograph {
+        reverse_proxy monograph-server:3000
+    }
+    handle @attach {
+        reverse_proxy {$S3_BACKEND:-notesnook-s3:9000}
+    }
+    handle @garage {
+        reverse_proxy {$S3_CONSOLE_BACKEND:-garage:3900}
+    }
+    handle @cors {
+        reverse_proxy cors-proxy:3000
+    }
+
+    # Path-based routing: for environments where the proxy strips or normalizes
+    # the Host header, route by URL path instead.
+    @notes-path path /monograph/* /notes/* /api/* /assets/* /favicon*
+    handle @notes-path {
+        reverse_proxy monograph-server:3000
+    }
+
+    @sync-path path /sync/* /users/*
+    handle @sync-path {
+        reverse_proxy notesnook-server:5264
+    }
+
+    @auth-path path /auth/* /connect/*
+    handle @auth-path {
+        reverse_proxy identity-server:8264
+    }
+
+    @sse-path path /sse/*
+    handle @sse-path {
+        reverse_proxy sse-server:7264
+    }
+
+    @s3-path path /attachments/*
+    handle @s3-path {
+        reverse_proxy {$S3_BACKEND:-garage:3900}
+    }
+
+    # Default: no match — return 404
+    respond 404
+}
