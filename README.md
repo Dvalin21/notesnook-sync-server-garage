@@ -43,7 +43,7 @@ table below for what each variable does). At minimum you MUST set:
 - `GARAGE_RPC_SECRET` — 32-byte hex for Garage RPC encryption
 - `GARAGE_ACCESS_KEY_ID` — S3 access key
 - `GARAGE_ACCESS_KEY_SECRET` — S3 secret key
-- `SERVER_DOMAIN` — your domain (e.g. `keithtechco.com`)
+- `SERVER_DOMAIN` — your domain (e.g. `example.com`)
 
 ### 3. Create the S3 bucket (first run only)
 
@@ -91,19 +91,19 @@ Once all services show `(healthy)`, test each subdomain through Caddy on
 port 8080. Replace `example.com` with your real `SERVER_DOMAIN`.
 
 ```bash
-curl -fsS -H "Host: auth.keithtechco.com"   http://localhost:8080/.well-known/openid-configuration
-curl -fsS -H "Host: sync.keithtechco.com"   http://localhost:8080/health
-curl -fsS -H "Host: sse.keithtechco.com"    http://localhost:8080/health
-curl -fsS -H "Host: notes.keithtechco.com"  http://localhost:8080/
-curl -fsS -H "Host: attach.keithtechco.com" http://localhost:8080/
-curl -fsS -H "Host: garage.keithtechco.com" http://localhost:8080/
-curl -fsS -H "Host: cors.keithtechco.com"   http://localhost:8080/
+curl -fsS -H "Host: auth.example.com"   http://localhost:8080/.well-known/openid-configuration
+curl -fsS -H "Host: sync.example.com"   http://localhost:8080/health
+curl -fsS -H "Host: sse.example.com"    http://localhost:8080/health
+curl -fsS -H "Host: notes.example.com"  http://localhost:8080/
+curl -fsS -H "Host: attach.example.com" http://localhost:8080/
+curl -fsS -H "Host: garage.example.com" http://localhost:8080/
+curl -fsS -H "Host: cors.example.com"   http://localhost:8080/
 ```
 
 Each should return `200` (or a valid page/JSON response). Auth, sync, and sse
 are API-only services — they don't serve a web page at `/`, so use their
 health/OIDC endpoints. Attach routes to Garage S3 and returns `403` without
-credentials — that's expected. Garage's web console (`garage.keithtechco.com`)
+credentials — that's expected. Garage's web console (`garage.example.com`)
 runs on port 3902 internally and returns the web UI. Cors returns `200` JSON
 at `/`. Notes (Monograph) serves a full web page at `/`.
 
@@ -126,15 +126,15 @@ to serve HTTPS. Nginx Proxy Manager (NPM) is the recommended option.
 
 | Host | Type | Value |
 |---|---|---|
-| `auth.keithtechco.com` | A / CNAME | your server IP |
-| `sync.keithtechco.com` | A / CNAME | your server IP |
-| `sse.keithtechco.com` | A / CNAME | your server IP |
-| `notes.keithtechco.com` | A / CNAME | your server IP |
-| `attach.keithtechco.com` | A / CNAME | your server IP |
-| `garage.keithtechco.com` | A / CNAME | your server IP |
-| `cors.keithtechco.com` | A / CNAME | your server IP |
+| `auth.example.com` | A / CNAME | your server IP |
+| `sync.example.com` | A / CNAME | your server IP |
+| `sse.example.com` | A / CNAME | your server IP |
+| `notes.example.com` | A / CNAME | your server IP |
+| `attach.example.com` | A / CNAME | your server IP |
+| `garage.example.com` | A / CNAME | your server IP |
+| `cors.example.com` | A / CNAME | your server IP |
 
-**Apex domain:** If `keithtechco.com` already hosts a website on a different
+**Apex domain:** If `example.com` already hosts a website on a different
 server, do NOT create a proxy host for it. Leave it alone. The 7 subdomains
 above are all that this stack needs.
 
@@ -144,7 +144,7 @@ For each subdomain (`auth.`, `sync.`, `sse.`, `notes.`, `attach.`, `garage.`, `c
 
 1. **Proxy Host** → **Add Proxy Host**
 2. **Details tab:**
-   - Domain Name: `auth.keithtechco.com` (etc.)
+   - Domain Name: `auth.example.com` (etc.)
    - Scheme: `http`
    - Forward Host: `<your-server-ip>`
    - Forward Port: `8080`
@@ -167,21 +167,21 @@ with the same Host (your server IP) and routing breaks.
 
 **Alternative: wildcard certificate + single proxy host**
 
-If you have a wildcard certificate (`*.keithtechco.com`), you can create a single
-NPM proxy host with `*.keithtechco.com` → `http://<ip>:8080`. Then all 7
+If you have a wildcard certificate (`*.example.com`), you can create a single
+NPM proxy host with `*.example.com` → `http://<ip>:8080`. Then all 7
 subdomains share one SSL cert. But you still need the 7 DNS A records.
 
 **Caddy internal routing (for reference):**
 
 | Host header | Routes to |
 |---|---|
-| `sync.keithtechco.com` | `notesnook-server:5264` |
-| `auth.keithtechco.com` | `identity-server:8264` |
-| `sse.keithtechco.com` | `sse-server:7264` |
-| `notes.keithtechco.com` | `monograph-server:3000` |
-| `attach.keithtechco.com` | `garage:3900` (S3 API) |
-| `garage.keithtechco.com` | `garage:3902` (S3 console UI) |
-| `cors.keithtechco.com` | `cors-proxy:3000` |
+| `sync.example.com` | `notesnook-server:5264` |
+| `auth.example.com` | `identity-server:8264` |
+| `sse.example.com` | `sse-server:7264` |
+| `notes.example.com` | `monograph-server:3000` |
+| `attach.example.com` | `garage:3900` (S3 API) |
+| `garage.example.com` | `garage:3902` (S3 console UI) |
+| `cors.example.com` | `cors-proxy:3000` |
 
 ---
 
@@ -191,7 +191,7 @@ subdomains share one SSL cert. But you still need the 7 DNS A records.
 
 | Variable | Required | Used by | Description |
 |---|---|---|---|
-| `SERVER_DOMAIN` | Yes — Caddy routing | caddy | Your domain (e.g. `keithtechco.com`). Used for Host header matching. |
+| `SERVER_DOMAIN` | Yes — Caddy routing | caddy | Your domain (e.g. `example.com`). Used for Host header matching. |
 | `INSTANCE_NAME` | Yes | validate, identity-server | Display name for your Notesnook server. |
 | `NOTESNOOK_API_SECRET` | Yes | validate, identity-server, notesnook-server | API auth token secret. Generate with `openssl rand -base64 48`. |
 | `DISABLE_SIGNUPS` | Yes | identity-server | `true` = no new accounts. Set to `false` temporarily to create your first account, then set back to `true`. |
@@ -244,7 +244,7 @@ See `docker-compose.garage/README.md` in this repo for details.
 
 1. Set `DISABLE_SIGNUPS=false` in `.env`
 2. Restart: `docker compose restart identity-server`
-3. Open `https://sync.keithtechco.com` in a browser (or use the Notesnook Android app)
+3. Open `https://sync.example.com` in a browser (or use the Notesnook Android app)
 4. Create your account
 5. Set `DISABLE_SIGNUPS=true` in `.env`
 6. Restart: `docker compose restart identity-server`
@@ -255,9 +255,9 @@ In the Notesnook Android app, go to Settings → Sync → Custom server and ente
 
 | Field | Value |
 |---|---|
-| Server URL | `https://auth.keithtechco.com` |
-| Sync URL | `https://sync.keithtechco.com` |
-| Attachments URL | `https://attach.keithtechco.com` |
+| Server URL | `https://auth.example.com` |
+| Sync URL | `https://sync.example.com` |
+| Attachments URL | `https://attach.example.com` |
 
 The app uses `AUTH_SERVER_PUBLIC_URL` for OIDC discovery (login/OAuth) and
 `NOTESNOOK_APP_PUBLIC_URL` for note sync. `ATTACHMENTS_SERVER_PUBLIC_URL` is
@@ -265,17 +265,17 @@ used for uploading/downloading attachments.
 
 ### Web client
 
-Open `https://notes.keithtechco.com` in a browser. Log in with your account.
+Open `https://notes.example.com` in a browser. Log in with your account.
 
 ### Garage S3 console
 
-Open `https://garage.keithtechco.com` in a browser. Log in with the
+Open `https://garage.example.com` in a browser. Log in with the
 `GARAGE_ACCESS_KEY_ID` / `GARAGE_ACCESS_KEY_SECRET` from your `.env` to
 browse buckets and manage objects.
 
 ### S3 attachments API
 
-The Notesnook app uses `https://attach.keithtechco.com` for S3 operations.
+The Notesnook app uses `https://attach.example.com` for S3 operations.
 It authenticates with the `GARAGE_ACCESS_KEY_ID` / `GARAGE_ACCESS_KEY_SECRET`
 credentials. You don't need to do anything special — the app handles this
 automatically once the URLs are configured.
@@ -288,30 +288,30 @@ automatically once the URLs are configured.
 
 ```bash
 # Auth — OIDC discovery
-curl -fsS -H "Host: auth.keithtechco.com" http://localhost:8080/.well-known/openid-configuration
+curl -fsS -H "Host: auth.example.com" http://localhost:8080/.well-known/openid-configuration
 
 # Sync — health
-curl -fsS -H "Host: sync.keithtechco.com" http://localhost:8080/health
+curl -fsS -H "Host: sync.example.com" http://localhost:8080/health
 
 # SSE — health
-curl -fsS -H "Host: sse.keithtechco.com" http://localhost:8080/health
+curl -fsS -H "Host: sse.example.com" http://localhost:8080/health
 
 # Monograph — web client HTML
-curl -fsS -H "Host: notes.keithtechco.com" http://localhost:8080/
+curl -fsS -H "Host: notes.example.com" http://localhost:8080/
 
 # Attach — S3 API (403 without auth = correct)
-curl -fsS -H "Host: attach.keithtechco.com" http://localhost:8080/
+curl -fsS -H "Host: attach.example.com" http://localhost:8080/
 
 # Garage — S3 console (403 without auth = correct)
-curl -fsS -H "Host: garage.keithtechco.com" http://localhost:8080/
+curl -fsS -H "Host: garage.example.com" http://localhost:8080/
 
 # Cors — CORS proxy JSON
-curl -fsS -H "Host: cors.keithtechco.com" http://localhost:8080/
+curl -fsS -H "Host: cors.example.com" http://localhost:8080/
 ```
 
 ### From another machine (through NPM)
 
-Replace `localhost:8080` with `https://auth.keithtechco.com` (etc.) and test
+Replace `localhost:8080` with `https://auth.example.com` (etc.) and test
 the HTTPS endpoints. Make sure DNS resolves and the NPM proxy hosts are
 configured with `proxy_set_header Host $host;`.
 
@@ -340,7 +340,7 @@ create_bucket(os.environ.get('GARAGE_HOST', 'garage'),
 "
 ```
 
-Or use the Garage web console at `https://garage.keithtechco.com`.
+Or use the Garage web console at `https://garage.example.com`.
 
 ### Access the Garage admin API
 

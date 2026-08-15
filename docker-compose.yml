@@ -325,7 +325,7 @@ services:
     environment:
       DOMAIN: "${SERVER_DOMAIN:-localhost}"
       S3_BACKEND: "${S3_BACKEND:-garage:3900}"
-      S3_CONSOLE_BACKEND: "${S3_CONSOLE_BACKEND:-garage:3900}"
+      S3_CONSOLE_BACKEND: "${S3_CONSOLE_BACKEND:-garage:3902}"
     depends_on:
       notesnook-server:
         condition: service_started

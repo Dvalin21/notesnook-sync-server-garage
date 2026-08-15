@@ -1,5 +1,5 @@
 # Notesnook Sync Stack — Internal Reverse Proxy (Garage S3 version)
-# Set SERVER_DOMAIN in .env to your domain (e.g. "keithtechco.com").
+# Set SERVER_DOMAIN in .env to your domain (e.g. "example.com").
 # Routes by Host header to the correct backend service.
 # TLS is handled by your external proxy — Caddy does plain HTTP internally.
 # When Host header is missing or unexpected, routes by URL path.
