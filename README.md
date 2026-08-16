@@ -174,12 +174,12 @@ to serve HTTPS. Nginx Proxy Manager (NPM) is the recommended option.
 **Apex domain:** If `example.com` already hosts a website on a different
 server, do NOT create a proxy host for it. Leave it alone. The 7 required
 subdomains above are all that this stack needs for core functionality.
-Add `inbox.` and `themes.` only if you enable those optional services.
+Add `inbox.` and `themes.` if you deploy those optional services.
 
-**NPM proxy hosts (create 7 required + 2 optional):**
+**NPM proxy hosts (create 7 required + 2 optional, if enabled):**
 
 For each required subdomain (`auth.`, `sync.`, `sse.`, `notes.`, `attach.`, `garage.`, `cors.`):
-For each optional subdomain (`inbox.`, `themes.`) if enabled:
+For each optional subdomain (`inbox.`, `themes.`) if you deploy those services:
 
 1. **Proxy Host** → **Add Proxy Host**
 2. **Details tab:**
