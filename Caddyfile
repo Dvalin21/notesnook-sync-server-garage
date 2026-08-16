@@ -23,6 +23,8 @@
     @garage host garage.{$DOMAIN}
     @cors host cors.{$DOMAIN}
     @debug host debug.{$DOMAIN}
+    @inbox host inbox.{$DOMAIN}
+    @themes host themes.{$DOMAIN}
 
     handle @sync {
         reverse_proxy notesnook-server:5264
@@ -44,6 +46,12 @@
     }
     handle @cors {
         reverse_proxy cors-proxy:3000
+    }
+    handle @inbox {
+        reverse_proxy inbox-api:5181
+    }
+    handle @themes {
+        reverse_proxy themes-server:9000
     }
     handle @debug {
         respond "Host: {host}\nDOMAIN: {$DOMAIN}\nS3_BACKEND: {$S3_BACKEND}\nS3_CONSOLE_BACKEND: {$S3_CONSOLE_BACKEND}\n"

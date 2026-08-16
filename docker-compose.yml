@@ -339,6 +339,10 @@ services:
         condition: service_started
       cors-proxy:
         condition: service_started
+      inbox-api:
+        condition: service_started
+      themes-server:
+        condition: service_started
     deploy:
       resources:
         limits:
@@ -347,6 +351,43 @@ services:
         reservations:
           cpus: "0.1"
           memory: 32M
+
+  inbox-api:
+    image: streetwriters/notesnook-inbox:latest
+    restart: unless-stopped
+    networks:
+      - notesnook
+    depends_on:
+      notesnook-server:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:5181/health').then(r => { if (!r.ok) process.exit(1); }).catch(() => process.exit(1))"]
+      interval: 40s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+    environment:
+      HOST: "0.0.0.0"
+      PORT: 5181
+      NOTESNOOK_API_SERVER_URL: "http://notesnook-server:5264"
+
+  themes-server:
+    image: streetwriters/themes-server:latest
+    restart: unless-stopped
+    networks:
+      - notesnook
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:9000/health').then(r => { if (!r.ok) process.exit(1); }).catch(() => process.exit(1))"]
+      interval: 40s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+    environment:
+      HOST: "0.0.0.0"
+      PORT: 9000
+      THEMES_REPO_URL: "https://github.com/streetwriters/notesnook-themes.git"
+    volumes:
+      - themesdata:/installs.json
 
   autoheal:
     image: willfarrell/autoheal:latest
@@ -367,6 +408,7 @@ volumes:
   s3data:
   garage-meta:
   caddy-data:
+  themesdata:
   dpdata-identity:
   dpdata-notesnook:
   dpdata-sse:
