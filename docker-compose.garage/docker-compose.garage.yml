@@ -1,7 +1,7 @@
 # Garage S3 overlay for notesnook-sync-server
 #
 # Usage:
-#   docker compose -f docker-compose.yml -f examples/garage/docker-compose.garage.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.garage/docker-compose.garage.yml up -d
 #
 # Replaces MinIO with Garage S3-compatible object storage.
 # Garage image: dxflrs/garage:v2.1.0
@@ -37,7 +37,7 @@ services:
     volumes:
       - s3data:/var/lib/garage/data
       - garage-meta:/var/lib/garage/meta
-      - ./examples/garage/garage.toml:/etc/garage.toml:ro
+      - ./docker-compose.garage/garage.toml:/etc/garage.toml:ro
     environment:
       - GARAGE_RPC_SECRET=${GARAGE_RPC_SECRET:-}
     networks:
@@ -76,7 +76,7 @@ services:
       - GARAGE_S3_PORT=3900
       - BUCKET_NAME=attachments
     volumes:
-      - ./examples/garage/setup-garage.sh:/setup-garage.sh:ro
+      - ./docker-compose.garage/setup-garage.sh:/setup-garage.sh:ro
     entrypoint: /usr/local/bin/python3
     command: ["/setup-garage.sh"]
     deploy:
