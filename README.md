@@ -35,6 +35,10 @@ git clone https://github.com/Dvalin21/notesnook-sync-server-garage.git
 cd notesnook-sync-server-garage
 ```
 
+The `docker-compose.garage/` directory must sit alongside `docker-compose.yml`.
+It contains `garage.toml`, `setup-garage.sh`, and `docker-compose.garage.yml`.
+**Do not delete or move this directory** — the compose file reads from it.
+
 ### 2. Create `.env` from the template
 
 ```bash
@@ -46,9 +50,21 @@ Fill in all the required values (see `.env.example` for placeholders and the
 table below for what each variable does). At minimum you MUST set:
 
 - `NOTESNOOK_API_SECRET` — random secret for token signing
+  ```
+  openssl rand -base64 48
+  ```
 - `GARAGE_RPC_SECRET` — 32-byte hex for Garage RPC encryption
+  ```
+  openssl rand -hex 32
+  ```
 - `GARAGE_ACCESS_KEY_ID` — S3 access key
+  ```
+  openssl rand -base64 12
+  ```
 - `GARAGE_ACCESS_KEY_SECRET` — S3 secret key
+  ```
+  openssl rand -base64 24
+  ```
 - `SERVER_DOMAIN` — your domain (e.g. `example.com`)
 
 ### 3. Create the S3 bucket (first run only)
@@ -114,6 +130,18 @@ port 3902 is an S3 static website host — it returns `404` at `/` unless you've
 created a bucket named `garage.<domain>` with website configuration.
 Cors returns `200` JSON at `/`. Notes (Monograph) serves a full web page at `/`.
 
+If you enable the optional inbox-api and themes-server services, also verify:
+
+```bash
+curl -fsS -H "Host: inbox.example.com" http://localhost:8080/health
+curl -fsS -H "Host: themes.example.com" http://localhost:8080/health
+```
+
+Each should return `200`. These are API-only services with no web UI —
+`GET /` returns 404 by design (inbox-api has only `POST /`; themes-server
+is a TRPC API). The Notesnook app uses them via their public URLs, not by
+browsing.
+
 **Note on root paths:** API servers (auth, sync, sse) don't serve a web page at
 `/` — auth uses `/.well-known/openid-configuration`, sync and sse have `/health`.
 Monograph serves the full web client. Cors is a JSON API. Attach and garage are
@@ -129,25 +157,29 @@ to serve HTTPS. Nginx Proxy Manager (NPM) is the recommended option.
 - NPM installed and reachable from the internet
 - DNS records for all subdomains pointing to your server's public IP
 
-**DNS records needed (7 subdomains + apex if you want):**
+**DNS records needed (9 subdomains + apex if you want):**
 
-| Host | Type | Value |
-|---|---|---|
-| `auth.example.com` | A / CNAME | your server IP |
-| `sync.example.com` | A / CNAME | your server IP |
-| `sse.example.com` | A / CNAME | your server IP |
-| `notes.example.com` | A / CNAME | your server IP |
-| `attach.example.com` | A / CNAME | your server IP |
-| `garage.example.com` | A / CNAME | your server IP |
-| `cors.example.com` | A / CNAME | your server IP |
+|| Host | Type | Value |
+||---|---|---|
+|| `auth.example.com` | A / CNAME | your server IP |
+|| `sync.example.com` | A / CNAME | your server IP |
+|| `sse.example.com` | A / CNAME | your server IP |
+|| `notes.example.com` | A / CNAME | your server IP |
+|| `attach.example.com` | A / CNAME | your server IP |
+|| `garage.example.com` | A / CNAME | your server IP |
+|| `cors.example.com` | A / CNAME | your server IP |
+|| `inbox.example.com` | A / CNAME | your server IP (optional) |
+|| `themes.example.com` | A / CNAME | your server IP (optional) |
 
 **Apex domain:** If `example.com` already hosts a website on a different
-server, do NOT create a proxy host for it. Leave it alone. The 7 subdomains
-above are all that this stack needs.
+server, do NOT create a proxy host for it. Leave it alone. The 7 required
+subdomains above are all that this stack needs for core functionality.
+Add `inbox.` and `themes.` only if you enable those optional services.
 
-**NPM proxy hosts (create 7, one per subdomain):**
+**NPM proxy hosts (create 7 required + 2 optional):**
 
-For each subdomain (`auth.`, `sync.`, `sse.`, `notes.`, `attach.`, `garage.`, `cors.`):
+For each required subdomain (`auth.`, `sync.`, `sse.`, `notes.`, `attach.`, `garage.`, `cors.`):
+For each optional subdomain (`inbox.`, `themes.`) if enabled:
 
 1. **Proxy Host** → **Add Proxy Host**
 2. **Details tab:**
@@ -175,20 +207,23 @@ with the same Host (your server IP) and routing breaks.
 **Alternative: wildcard certificate + single proxy host**
 
 If you have a wildcard certificate (`*.example.com`), you can create a single
-NPM proxy host with `*.example.com` → `http://<ip>:8080`. Then all 7
-subdomains share one SSL cert. But you still need the 7 DNS A records.
+NPM proxy host with `*.example.com` → `http://<ip>:8080`. Then 9 subdomains
+(auth, sync, sse, notes, attach, garage, cors, inbox, themes) share one SSL
+cert. But you still need the 9 DNS A records.
 
 **Caddy internal routing (for reference):**
 
-| Host header | Routes to |
-|---|---|
-| `sync.example.com` | `notesnook-server:5264` |
-| `auth.example.com` | `identity-server:8264` |
-| `sse.example.com` | `sse-server:7264` |
-| `notes.example.com` | `monograph-server:3000` |
-| `attach.example.com` | `garage:3900` (S3 API) |
+|| Host header | Routes to |
+||---|---|
+|| `sync.example.com` | `notesnook-server:5264` |
+|| `auth.example.com` | `identity-server:8264` |
+|| `sse.example.com` | `sse-server:7264` |
+|| `notes.example.com` | `monograph-server:3000` |
+|| `attach.example.com` | `garage:3900` (S3 API) |
 || `garage.example.com` | `garage:3902` (S3 static website host — serves files from S3 buckets by Host header; not an admin console) |
-| `cors.example.com` | `cors-proxy:3000` |
+|| `cors.example.com` | `cors-proxy:3000` |
+|| `inbox.example.com` | `inbox-api:5181` (optional — accepts encrypted inbox notifications POSTed by the Notesnook app; no web UI, `GET /` returns 404 by design) |
+|| `themes.example.com` | `themes-server:9000` (optional — serves theme metadata the Notesnook app fetches; no web UI, TRPC API, `GET /` returns 404 by design) |
 
 ---
 
@@ -219,12 +254,11 @@ subdomains share one SSL cert. But you still need the 7 DNS A records.
 | `SMTP_USERNAME` | No | validate (warn if missing) | SMTP username. |
 | `SMTP_PASSWORD` | No | validate (warn if missing) | SMTP password. |
 | `SMTP_FROM_NAME` | No | identity-server | Name shown in SMTP-sent emails. Default: `Notesnook`. |
-|| `NOTESNOOK_CORS_ORIGINS` | No | cors-proxy | Comma-separated list of allowed CORS origins. Default: `*`. |
+|| `NOTESNOOK_CORS_ORIGINS` | No | cors-proxy | Comma-separated list of allowed CORS origins. Default: `*`. This is the env var the cors-proxy container actually reads. |
 || `CORS_PROXY_PUBLIC_URL` | No | web client, cors-proxy | Public URL for the CORS proxy service. Set to `https://cors.<SERVER_DOMAIN>`. |
-|| `CORS_PROXY_ALLOWED_ORIGINS` | No | cors-proxy | Allowed origins for the CORS proxy. Default: `*`. |
-|| `INBOX_API_PUBLIC_URL` | No | inbox-api (extras) | Public URL for the Inbox API. Only needed with `--profile extras`. |
-|| `THEMES_SERVER_PUBLIC_URL` | No | themes-server (extras) | Public URL for the Themes server. Only needed with `--profile extras`. |
-|| `THEMES_REPO_URL` | No | themes-server (extras) | Git URL for the Themes repository. Only needed with `--profile extras`. |
+|| `INBOX_API_PUBLIC_URL` | No | inbox-api (optional) | Public HTTPS URL for the Inbox API (e.g. `https://inbox.example.com`). The Notesnook app POSTs encrypted inbox notifications here. Set to empty string `""` to disable. |
+|| `THEMES_SERVER_PUBLIC_URL` | No | themes-server (optional) | Public HTTPS URL for the Themes Server (e.g. `https://themes.example.com`). The Notesnook app queries this to fetch available theme metadata. Set to empty string `""` to disable. |
+|| `THEMES_REPO_URL` | No | themes-server (optional) | Git clone URL for the themes repository. The themes-server clones this on startup and serves theme metadata from it. Default: upstream `streetwriters/notesnook-themes.git`. Change only if you host your own theme repo. |
 || `TWILIO_ACCOUNT_SID` | No | identity-server | Twilio account SID for SMS 2FA. |
 || `TWILIO_AUTH_TOKEN` | No | identity-server | Twilio auth token for SMS 2FA. |
 || `TWILIO_SERVICE_SID` | No | identity-server | Twilio service SID for SMS 2FA. |
@@ -247,6 +281,54 @@ The overlay:
 - Adds `garage` to the `notesnook` network
 
 See `docker-compose.garage/README.md` in this repo for details.
+
+---
+
+## Optional services
+
+Two optional services are available for this stack: **inbox-api** and **themes-server**. They are not required for basic Notesnook sync functionality — the core stack (sync, auth, SSE, monograph, attachments via Garage, CORS) works without them.
+
+### Inbox API (`inbox.<domain>`)
+
+The Inbox API is a small Express service that receives encrypted inbox notifications from the Notesnook app and relays them to the sync server. It is used when one Notesnook user sends an inbox message to another.
+
+**What it does:**
+1. Receives a POST request with an encrypted payload and an API key
+2. Fetches the recipient's public encryption key from the sync server
+3. Re-encrypts the payload with that public key (OpenPGP / AES-256)
+4. Posts the encrypted blob back to the sync server's `/inbox/items` endpoint
+
+**How the app uses it:** The Notesnook app is configured with `INBOX_API_PUBLIC_URL` (e.g. `https://inbox.keithtechco.com`). When an inbox message is sent, the app POSTs to that URL. You do not browse this service — it has no web UI. The only endpoint is `POST /` (plus `GET /health` for health checks). `GET /` returns 404 by design — there is no GET handler.
+
+**Config:** Set `INBOX_API_PUBLIC_URL=https://inbox.<your-domain>` in `.env`. Leave it empty (`""`) to disable. The service is not included in the Garage compose by default — add it to `docker-compose.yml` and configure Caddy routing before enabling.
+
+**Internal URL:** The `NOTESNOOK_API_SERVER_URL` env var inside the container is set to `http://notesnook-server:5264` (the internal Docker network address). You do not need to set this in `.env` — it is already configured in the compose file.
+
+### Themes Server (`themes.<domain>`)
+
+The Themes Server is a TRPC service that clones the `notesnook-themes` Git repository and serves theme metadata to the Notesnook app. The app queries it to discover which themes are available for rendering notes.
+
+**What it does:**
+1. On startup, clones the Git repo specified by `THEMES_REPO_URL` into the container
+2. Generates metadata from the cloned themes
+3. Serves theme list/metadata via TRPC procedures over HTTP
+
+**How the app uses it:** The Notesnook app is configured with `THEMES_SERVER_PUBLIC_URL` (e.g. `https://themes.keithtechco.com`). The app makes TRPC calls to fetch the theme list. You do not browse this service — it has no web UI. `GET /` returns a TRPC 404 error by design — TRPC handles all requests through its procedure router, and there is no procedure registered for the empty path.
+
+**Config:** Set `THEMES_SERVER_PUBLIC_URL=https://themes.<your-domain>` in `.env`. Leave it empty (`""`) to disable. Set `THEMES_REPO_URL` to a different Git URL only if you host your own theme repository.
+
+**Data persistence:** The themes data (cloned Git repo + generated metadata) lives inside the container at `/app/notesnook-themes/`. It is re-cloned from `THEMES_REPO_URL` on every container start. The `themesdata` Docker volume persists only `installs.json` (usage tracking), which is optional.
+
+### Disabling optional services
+
+To run the stack without inbox-api and themes-server:
+
+1. Set `INBOX_API_PUBLIC_URL=""` and `THEMES_SERVER_PUBLIC_URL=""` in `.env`
+2. Do not add the `inbox-api` and `themes-server` service blocks to `docker-compose.yml`
+3. Do not add `@inbox` and `@themes` handle blocks to `Caddyfile`
+4. Do not create `inbox.<domain>` and `themes.<domain>` DNS records
+
+Or leave the env vars set but do not deploy the services — they consume no resources when not running.
 
 ---
 
