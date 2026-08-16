@@ -238,9 +238,7 @@ cert. But you still need the 9 DNS A records.
 | `NOTESNOOK_API_SECRET` | Yes | validate, identity-server, notesnook-server | API auth token secret. Generate with `openssl rand -base64 48`. |
 | `DISABLE_SIGNUPS` | Yes | identity-server | `true` = no new accounts. Set to `false` temporarily to create your first account, then set back to `true`. |
 | `AUTH_SERVER_PUBLIC_URL` | Yes | Android app, web client | Public URL for the auth server. Must be `https://auth.<SERVER_DOMAIN>`. |
-| `NOTESNOOK_APP_PUBLIC_URL` | Yes | Android app | Public URL for the sync server. Must be `https://sync.<SERVER_DOMAIN>`. |
-| `MONOGRAPH_PUBLIC_URL` | Yes | Web client | Public URL for the Monograph web client. Must be `https://notes.<SERVER_DOMAIN>`. |
-| `ATTACHMENTS_SERVER_PUBLIC_URL` | Yes | Android app | Public URL for S3 attachments. Must be `https://attach.<SERVER_DOMAIN>`. |
+|| `NOTESNOOK_APP_PUBLIC_URL` | Yes | Android app | Public URL for the sync server. Must be `https://sync.<SERVER_DOMAIN>`. |
 | `GARAGE_RPC_SECRET` | Yes — Garage | garage | 32-byte hex for Garage RPC encryption. Generate with `openssl rand -hex 32`. |
 | `GARAGE_ACCESS_KEY_ID` | Yes — setup-garage | setup-garage, notesnook-server | S3 access key ID. Generate with `openssl rand -base64 12`. |
 | `GARAGE_ACCESS_KEY_SECRET` | Yes — setup-garage | setup-garage, notesnook-server | S3 secret access key. Generate with `openssl rand -base64 24`. |
@@ -255,7 +253,9 @@ cert. But you still need the 9 DNS A records.
 | `SMTP_PASSWORD` | No | validate (warn if missing) | SMTP password. |
 | `SMTP_FROM_NAME` | No | identity-server | Name shown in SMTP-sent emails. Default: `Notesnook`. |
 || `NOTESNOOK_CORS_ORIGINS` | No | cors-proxy | Comma-separated list of allowed CORS origins. Default: `*`. This is the env var the cors-proxy container actually reads. |
+|| `CORS_PROXY_ALLOWED_ORIGINS` | No | cors-proxy (mirrors MinIO edition) | Alias for `NOTESNOOK_CORS_ORIGINS` kept for consistency with the MinIO edition. Set to `*` to allow all origins. |
 || `CORS_PROXY_PUBLIC_URL` | No | web client, cors-proxy | Public URL for the CORS proxy service. Set to `https://cors.<SERVER_DOMAIN>`. |
+
 || `INBOX_API_PUBLIC_URL` | No | inbox-api (optional) | Public HTTPS URL for the Inbox API (e.g. `https://inbox.example.com`). The Notesnook app POSTs encrypted inbox notifications here. Set to empty string `""` to disable. |
 || `THEMES_SERVER_PUBLIC_URL` | No | themes-server (optional) | Public HTTPS URL for the Themes Server (e.g. `https://themes.example.com`). The Notesnook app queries this to fetch available theme metadata. Set to empty string `""` to disable. |
 || `THEMES_REPO_URL` | No | themes-server (optional) | Git clone URL for the themes repository. The themes-server clones this on startup and serves theme metadata from it. Default: upstream `streetwriters/notesnook-themes.git`. Change only if you host your own theme repo. |
@@ -349,15 +349,15 @@ In the Notesnook Android app, go to Settings → Sync → Custom server and ente
 
 | Field | Value |
 |---|---|
-| Server URL | `https://auth.example.com` |
-| Sync URL | `https://sync.example.com` |
-| Attachments URL | `https://attach.example.com` |
+|| Server URL (Auth) | `https://auth.example.com` |
+|| Sync URL | `https://sync.example.com` |
+|| Monograph URL | `https://notes.example.com` |
 
 The app uses `AUTH_SERVER_PUBLIC_URL` for OIDC discovery (login/OAuth) and
 `NOTESNOOK_APP_PUBLIC_URL` for note sync. `ATTACHMENTS_SERVER_PUBLIC_URL` is
-used for uploading/downloading attachments.
-
-### Web client
+used server-side to generate S3 presigned URLs for downloads and multipart
+upload parts — it is **not** entered in the client Settings. The client
+receives presigned URLs from the sync server automatically.
 
 Open `https://notes.example.com` in a browser. Log in with your account.
 
